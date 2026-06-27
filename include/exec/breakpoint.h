@@ -18,6 +18,11 @@ typedef struct CPUBreakpoint {
     QTAILQ_ENTRY(CPUBreakpoint) entry;
 } CPUBreakpoint;
 
+typedef struct CPUFlatBreakpoint {
+    vaddr pc;
+    int flags;
+} CPUFlatBreakpoint;
+
 typedef struct CPUWatchpoint {
     vaddr vaddr;
     vaddr len;

@@ -296,8 +296,12 @@ static void log_cpu_exec(vaddr pc, CPUState *cpu,
 static bool check_for_breakpoints_slow(CPUState *cpu, vaddr pc,
                                        uint32_t *cflags)
 {
-    CPUBreakpoint *bp;
+    CPUFlatBreakpoint fbp_key = {
+        .pc = pc,
+        .flags = 0,
+    };
     bool match_page = false;
+    uint64_t pb;
 
     /*
      * Singlestep overrides breakpoints.
@@ -312,17 +316,14 @@ static bool check_for_breakpoints_slow(CPUState *cpu, vaddr pc,
         return false;
     }
 
-    QTAILQ_FOREACH(bp, &cpu->breakpoints, entry) {
-        /*
-         * If we have an exact pc match, trigger the breakpoint.
-         * Otherwise, note matches within the page.
-         */
-        if (pc == bp->pc) {
+
+    CPUFlatBreakpoint *fbp = g_tree_lookup(cpu->flat_breakpoints, &fbp_key);
+    if (fbp) {
             bool match_bp = false;
 
-            if (bp->flags & BP_GDB) {
+            if (fbp->flags & BP_GDB) {
                 match_bp = true;
-            } else if (bp->flags & BP_CPU) {
+            } else if (fbp->flags & BP_CPU) {
 #ifdef CONFIG_USER_ONLY
                 g_assert_not_reached();
 #else
@@ -336,9 +337,11 @@ static bool check_for_breakpoints_slow(CPUState *cpu, vaddr pc,
                 cpu->exception_index = EXCP_DEBUG;
                 return true;
             }
-        } else if (((pc ^ bp->pc) & TARGET_PAGE_MASK) == 0) {
-            match_page = true;
-        }
+    }
+
+    pb = pc & TARGET_PAGE_MASK;
+    if (g_tree_lookup(cpu->page_breakpoints, &pb)) {
+        match_page = true;
     }
 
     /*
