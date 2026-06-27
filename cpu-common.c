@@ -23,6 +23,7 @@
 #include "hw/core/cpu.h"
 #include "qemu/lockable.h"
 #include "trace/trace-root.h"
+#include "exec/target_page.h"
 
 QemuMutex qemu_cpu_list_lock;
 static QemuCond exclusive_cond;
@@ -388,20 +389,56 @@ void process_queued_cpu_work(CPUState *cpu)
     qemu_cond_broadcast(&qemu_work_cond);
 }
 
+/* Comparator for flat_breakpoints */
+static gint compare_flat_bps(gconstpointer a, gconstpointer b, gpointer user_data)
+{
+    CPUFlatBreakpoint bpa = *(const CPUFlatBreakpoint*)a;
+    CPUFlatBreakpoint bpb = *(const CPUFlatBreakpoint*)b;
+
+    if (bpa.pc < bpb.pc) {
+        return -1;
+    } else if (bpa.pc > bpb.pc) {
+        return 1;
+    }
+    return 0; /* same bp again(?) */
+}
+
+static gint compare_page_breakpoints(gconstpointer a, gconstpointer b, gpointer user_data)
+{
+    uint64_t pa = *(const uint64_t*)a;
+    uint64_t pb = *(const uint64_t*)b;
+
+    if (pa < pb) {
+        return -1;
+    } else if (pa > pb) {
+        return 1;
+    }
+    return 0; /* same bp again(?) */
+}
+
 /* Add a breakpoint.  */
 int cpu_breakpoint_insert(CPUState *cpu, vaddr pc, int flags,
                           CPUBreakpoint **breakpoint)
 {
     CPUBreakpoint *bp;
+    CPUFlatBreakpoint *fbp;
+    uint64_t *fpbp;
+    uint64_t *fpbp_exists = NULL;
 
     if (cpu->cc->gdb_adjust_breakpoint) {
         pc = cpu->cc->gdb_adjust_breakpoint(cpu, pc);
     }
 
     bp = g_malloc(sizeof(*bp));
+    fbp = g_malloc(sizeof(*fbp));
+    fpbp = g_malloc(sizeof(*fpbp));
 
     bp->pc = pc;
     bp->flags = flags;
+    fbp->pc = pc;
+    fbp->flags = flags;
+    *fpbp = pc & TARGET_PAGE_MASK;
+
 
     /* keep all GDB-injected breakpoints in front */
     if (flags & BP_GDB) {
@@ -409,6 +446,19 @@ int cpu_breakpoint_insert(CPUState *cpu, vaddr pc, int flags,
     } else {
         QTAILQ_INSERT_TAIL(&cpu->breakpoints, bp, entry);
     }
+
+    if (!cpu->flat_breakpoints) {
+        cpu->flat_breakpoints = g_tree_new_full(compare_flat_bps, NULL, g_free, NULL);
+    }
+    if (!cpu->page_breakpoints) {
+        cpu->page_breakpoints = g_tree_new_full(compare_page_breakpoints, NULL, g_free, NULL);
+    }
+
+    g_tree_insert(cpu->flat_breakpoints, fbp, fbp);
+
+    fpbp_exists = g_tree_lookup(cpu->page_breakpoints, fpbp);
+    if (!fpbp_exists)
+        g_tree_insert(cpu->page_breakpoints, fpbp, fpbp);
 
     if (breakpoint) {
         *breakpoint = bp;

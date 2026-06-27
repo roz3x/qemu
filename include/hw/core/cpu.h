@@ -527,6 +527,8 @@ struct CPUState {
 
     /* ice debug support */
     QTAILQ_HEAD(, CPUBreakpoint) breakpoints;
+    GTree *flat_breakpoints;
+    GTree *page_breakpoints;
 
     QTAILQ_HEAD(, CPUWatchpoint) watchpoints;
     CPUWatchpoint *watchpoint_hit;
