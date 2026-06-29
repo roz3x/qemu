@@ -296,7 +296,7 @@ static void log_cpu_exec(vaddr pc, CPUState *cpu,
 static bool check_for_breakpoints_slow(CPUState *cpu, vaddr pc,
                                        uint32_t *cflags)
 {
-    CPUFlatBreakpoint fbp_key = {
+    CPUBreakpoint key = {
         .pc = pc,
         .flags = 0,
     };
@@ -317,13 +317,13 @@ static bool check_for_breakpoints_slow(CPUState *cpu, vaddr pc,
     }
 
 
-    CPUFlatBreakpoint *fbp = g_tree_lookup(cpu->flat_breakpoints, &fbp_key);
-    if (fbp) {
+    CPUBreakpoint *bp = g_tree_lookup(cpu->breakpoints, &key);
+    if (bp) {
             bool match_bp = false;
 
-            if (fbp->flags & BP_GDB) {
+            if (bp->flags & BP_GDB) {
                 match_bp = true;
-            } else if (fbp->flags & BP_CPU) {
+            } else if (bp->flags & BP_CPU) {
 #ifdef CONFIG_USER_ONLY
                 g_assert_not_reached();
 #else
@@ -365,7 +365,7 @@ static bool check_for_breakpoints_slow(CPUState *cpu, vaddr pc,
 static inline bool check_for_breakpoints(CPUState *cpu, vaddr pc,
                                          uint32_t *cflags)
 {
-    return unlikely(!QTAILQ_EMPTY(&cpu->breakpoints)) &&
+    return cpu->breakpoints && g_tree_nnodes(cpu->breakpoints) &&
         check_for_breakpoints_slow(cpu, pc, cflags);
 }
 

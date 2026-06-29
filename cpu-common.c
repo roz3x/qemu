@@ -392,8 +392,8 @@ void process_queued_cpu_work(CPUState *cpu)
 /* Comparator for flat_breakpoints */
 static gint compare_flat_breakpoints(gconstpointer a, gconstpointer b, gpointer user_data)
 {
-    CPUFlatBreakpoint bpa = *(const CPUFlatBreakpoint*)a;
-    CPUFlatBreakpoint bpb = *(const CPUFlatBreakpoint*)b;
+    CPUBreakpoint bpa = *(const CPUBreakpoint*)a;
+    CPUBreakpoint bpb = *(const CPUBreakpoint*)b;
 
     if (bpa.pc < bpb.pc) {
         return -1;
@@ -421,44 +421,27 @@ int cpu_breakpoint_insert(CPUState *cpu, vaddr pc, int flags,
                           CPUBreakpoint **breakpoint)
 {
     CPUBreakpoint *bp;
-    CPUFlatBreakpoint *fbp;
     uint64_t *fpbp;
-    uint64_t *fpbp_exists = NULL;
 
     if (cpu->cc->gdb_adjust_breakpoint) {
         pc = cpu->cc->gdb_adjust_breakpoint(cpu, pc);
     }
 
     bp = g_malloc(sizeof(*bp));
-    fbp = g_malloc(sizeof(*fbp));
     fpbp = g_malloc(sizeof(*fpbp));
 
     bp->pc = pc;
     bp->flags = flags;
-    fbp->pc = pc;
-    fbp->flags = flags;
     *fpbp = pc & TARGET_PAGE_MASK;
 
-
-    /* keep all GDB-injected breakpoints in front */
-    if (flags & BP_GDB) {
-        QTAILQ_INSERT_HEAD(&cpu->breakpoints, bp, entry);
-    } else {
-        QTAILQ_INSERT_TAIL(&cpu->breakpoints, bp, entry);
-    }
-
-    if (!cpu->flat_breakpoints) {
-        cpu->flat_breakpoints = g_tree_new_full(compare_flat_breakpoints, NULL, g_free, NULL);
-    }
-    if (!cpu->page_breakpoints) {
+    if (!cpu->breakpoints) {
+        cpu->breakpoints = g_tree_new_full(compare_flat_breakpoints, NULL, g_free, NULL);
         cpu->page_breakpoints = g_tree_new_full(compare_page_breakpoints, NULL, g_free, NULL);
     }
 
-    g_tree_insert(cpu->flat_breakpoints, fbp, fbp);
-
-    fpbp_exists = g_tree_lookup(cpu->page_breakpoints, fpbp);
-    if (!fpbp_exists)
-        g_tree_insert(cpu->page_breakpoints, fpbp, fpbp);
+    g_tree_insert(cpu->breakpoints, bp, bp);
+    /* we need the duplicates */
+    g_tree_insert(cpu->page_breakpoints, fpbp, fpbp);
 
     if (breakpoint) {
         *breakpoint = bp;
@@ -471,24 +454,23 @@ int cpu_breakpoint_insert(CPUState *cpu, vaddr pc, int flags,
 /* Remove a specific breakpoint.  */
 int cpu_breakpoint_remove(CPUState *cpu, vaddr pc, int flags)
 {
-    CPUBreakpoint *bp;
-    CPUFlatBreakpoint fbp;
-    uint64_t pbp = pc & TARGET_PAGE_MASK;
+    CPUBreakpoint bp = {.pc = pc}, *bp1;
+    uint64_t pbp = pc & TARGET_PAGE_MASK, *pbp1;
 
     if (cpu->cc->gdb_adjust_breakpoint) {
         pc = cpu->cc->gdb_adjust_breakpoint(cpu, pc);
     }
 
-    QTAILQ_FOREACH(bp, &cpu->breakpoints, entry) {
-        if (bp->pc == pc && bp->flags == flags) {
-            cpu_breakpoint_remove_by_ref(cpu, bp);
-            return 0;
-        }
-    }
+    if (cpu->breakpoints) {
+        bp1 = g_tree_lookup(cpu->breakpoints, &bp);
+        if (bp1)
+            g_tree_remove(cpu->breakpoints, bp1);
+        pbp1 = g_tree_lookup(cpu->page_breakpoints, &pbp);
+        if (pbp1)
+            g_tree_remove(cpu->page_breakpoints, pbp1);
 
-    fbp.pc = pc;
-    g_tree_remove(cpu->flat_breakpoints, &fbp);
-    g_tree_remove(cpu->page_breakpoints, &pbp);
+        return 0;
+    }
 
     return -ENOENT;
 }
@@ -496,27 +478,22 @@ int cpu_breakpoint_remove(CPUState *cpu, vaddr pc, int flags)
 /* Remove a specific breakpoint by reference.  */
 void cpu_breakpoint_remove_by_ref(CPUState *cpu, CPUBreakpoint *bp)
 {
-    CPUFlatBreakpoint fbp = {.pc = bp->pc};
     uint64_t pbp = bp->pc & TARGET_PAGE_MASK;
 
-    QTAILQ_REMOVE(&cpu->breakpoints, bp, entry);
-
     trace_breakpoint_remove(cpu->cpu_index, bp->pc, bp->flags);
-    g_free(bp);
 
-    g_tree_remove(cpu->flat_breakpoints, &fbp);
-    g_tree_remove(cpu->page_breakpoints, &pbp);
+    if(cpu->breakpoints) {
+        g_tree_remove(cpu->breakpoints, g_tree_lookup(cpu->breakpoints, &bp));
+        g_tree_remove(cpu->page_breakpoints, g_tree_lookup(cpu->page_breakpoints, &pbp));
+    }
 
 }
 
 /* Remove all matching breakpoints. */
 void cpu_breakpoint_remove_all(CPUState *cpu, int mask)
 {
-    CPUBreakpoint *bp, *next;
-
-    QTAILQ_FOREACH_SAFE(bp, &cpu->breakpoints, entry, next) {
-        if (bp->flags & mask) {
-            cpu_breakpoint_remove_by_ref(cpu, bp);
-        }
+    if (cpu->breakpoints) {
+        g_tree_destroy(cpu->breakpoints);
+        g_tree_destroy(cpu->page_breakpoints);
     }
 }
