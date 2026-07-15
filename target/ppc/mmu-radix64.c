@@ -30,6 +30,7 @@
 #include "mmu-radix64.h"
 #include "mmu-book3s-v3.h"
 #include "mmu-books.h"
+#include "gdbstub/internals.h"
 
 /* Radix Partition Table Entry Fields */
 #define PATE1_R_PRTB           0x0FFFFFFFFFFFF000
@@ -827,6 +828,24 @@ bool ppc_radix64_xlate(PowerPCCPU *cpu, vaddr eaddr, MMUAccessType access_type,
     bool ret = ppc_radix64_xlate_impl(cpu, eaddr, access_type, raddrp,
                                       psizep, protp, mmu_idx, guest_visible);
 
+
+    /* This is a debug logic.
+     * Whenever cpu tries to access the value  below
+     * 4G it will print the error. (or optionally) pause GDB for you.
+     */
+    static bool start = false;
+    if (!start && *raddrp == 0x1fffff000) {
+        start = true;
+    }
+
+    if (start) {
+        // CPUState *cs = CPU(cpu);
+        if (*raddrp < 0x100000000ull && *raddrp != 0) {
+            // printf("[LOW MEM ACCESS] at 0x%lx nip 0x%lx from cpu %d\n", *raddrp, cpu->env.nip - 4, cpu->vcpu_id);
+            // gdb_breakpoint_insert(cs, 0, cpu->env.nip - 4, 4);
+        }
+    }
+    
     qemu_log_mask(CPU_LOG_MMU, "%s for %s @0x%"VADDR_PRIx
                   " mmu_idx %u (prot %c%c%c) -> 0x%"HWADDR_PRIx"\n",
                   __func__, access_str(access_type),
