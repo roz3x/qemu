@@ -772,6 +772,20 @@ static void *pnv_dt_create(MachineState *machine)
     /* Advertise support for MPIPL */
     pnv_dt_mpipl_dump(pnv, fdt);
 
+    /* Set hrmor
+     * Hardcoded value of 4G offset, 4G size
+     */
+    int hnode = fdt_add_subnode(fdt, 0, "hrmor");
+
+    #define KB 1024
+    #define MB KB*KB
+    #define GB KB*MB
+    uint64_t hrmor_offset = cpu_to_fdt64(4ull * GB);
+    uint64_t size = cpu_to_fdt64(4ull * GB);
+
+    _FDT((fdt_setprop(fdt, hnode, "offset", &hrmor_offset, sizeof(hrmor_offset))));
+    _FDT((fdt_setprop(fdt, hnode, "size", &size, sizeof(size))));
+
     return fdt;
 }
 
